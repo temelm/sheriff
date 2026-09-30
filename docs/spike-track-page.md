@@ -10,37 +10,29 @@ Code: [`src/index.ts`](../src/index.ts) · Tests: [`test/track-page.test.ts`](..
 import { createSheriff } from './src/index'
 
 // Once, when the site starts.
-const sheriff = createSheriff({ environment: 'production' })
+const sheriff = createSheriff('production')
 
 // After each page's content has loaded.
-sheriff.trackPage({ user: { loginStatus: 'guest' } })
+sheriff.trackPage({ loginStatus: 'guest' })
 
-sheriff.context // read-only snapshot of the current global context
-sheriff.events  // ordered history of everything sent
+sheriff.context // the current global context
+sheriff.events  // every page view sent so far
 ```
 
-`createSheriff` also puts the instance on `window.sheriff`, so a tag manager or the Chrome extension can read it.
+The instance is also put on `window.sheriff`, so a tag manager or the Chrome extension can find it.
 
 ## What trackPage does
 
-1. **Reset:** the old context is thrown away. Nothing carries over.
-2. **Build** the [global context](contracts/page-view.md):
-   - `page.path` from `location.pathname` (Sheriff)
-   - `page.referrer` as the previous page's URL, or `document.referrer` on the first page (Sheriff)
-   - `site.environment` from setup (config)
-   - `user.loginStatus` from the call (app)
-3. **Validate.** In `development` an invalid page view throws `SheriffValidationError` and nothing is sent. Anywhere else it is still sent, with `valid: false` and the `errors`.
-4. **Freeze** it as the new `sheriff.context`.
-5. **Wrap** it as an event:
-   ```ts
-   { event: 'pageView', eventId, timestamp, context, valid, errors }
-   ```
-   `eventId` is unique per event (which event it is), and is used for de-duplication and debugging. `timestamp` is when it happened, in ISO 8601.
-6. **Deliver** it twice:
-   - appended to `sheriff.events`, so listeners that start late (tag managers load asynchronously) still get every event
-   - dispatched as one `CustomEvent` named `sheriff:event`, with the event as `detail`, for listeners already running
+1. **Reset and build** a brand new [global context](contracts/page-view.md): `page.path` from the location, `page.referrer` as the previous page's URL (or `document.referrer` on the first page), `site.environment` from setup, and `user.loginStatus` from the call.
+2. **Validate** what the app passed in. Sheriff trusts the values it sets itself. In `development` a bad value throws and nothing is sent. Anywhere else the event is still sent, with the `errors` attached.
+3. **Save** it as `sheriff.context`, and remember this page as the next page's referrer.
+4. **Send** it as `{ event: 'pageView', eventId, timestamp, context, errors }`:
+   - added to `sheriff.events`, so tag managers that load late still get every page view
+   - dispatched as a `sheriff:event` CustomEvent, for anything already listening
 
-Sheriff deliberately does not push to `window.dataLayer` (it clashes with GTM) or `window.digitalData` (common elsewhere). It owns the `window.sheriff` namespace instead.
+`eventId` says which event it is (unique). `timestamp` says when it happened.
+
+Sheriff doesn't push to `window.dataLayer` (it clashes with GTM) or `window.digitalData`. It owns `window.sheriff` instead.
 
 ## Listening
 
