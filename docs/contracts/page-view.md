@@ -1,21 +1,21 @@
 # Contract: global page view
 
-Issue: [#1](https://github.com/temelm/sheriff/issues/1) · Status: draft
+Issue: [#1](https://github.com/temelm/sheriff/issues/1) · Status: agreed 2026-09-30
 
-Every page view must carry this context, on every site. Page types (search results, product, and so on) add their own rules on top in separate contracts.
+Every page view carries this context, on every site. It's deliberately small. Sites add their own global variables and rules on top, and page types (search results, product, and so on) get their own contracts.
 
 ## How it's used
 
 ```
 sheriff = {
-  context,     // read-only: the current page, user and site data below
+  context,     // read-only: the current context below
   trackPage,   // after page content loads: reset all context, set it, send the page event
   trackEvent,  // interactions: inherit the current context, add event data, send
 }
 ```
 
-- On every page view the whole context is reset, then set again in full. Nothing carries over from the previous page, on standard sites and single-page apps alike.
-- Interactions sent with `trackEvent` get a snapshot of this context, taken at the moment they fire.
+- On every page view the whole context is reset and set again. Nothing carries over from the previous page.
+- Events sent with `trackEvent` get a snapshot of the context, taken at the moment they fire.
 - A page view with missing or invalid required data fails validation.
 
 ## Shape
@@ -23,62 +23,43 @@ sheriff = {
 ```ts
 context = {
   page: {
-    viewId:   string   // Sheriff
-    url:      string   // Sheriff
-    path:     string   // Sheriff
-    referrer: string   // Sheriff
-    title:    string   // Sheriff
-    name:     string   // app
-    type:     string   // app (allowed values agreed per business)
-    locale:   string   // app
-  },
-  user: {
-    isLoggedIn:  boolean // app
-    customerId?: string  // app, only when logged in
+    path:     string  // Sheriff
+    referrer: string  // Sheriff
   },
   site: {
-    name:        string  // config
-    environment: 'production' | 'staging' | 'development' // config
-    appVersion:  string  // config
+    environment: 'production' | 'staging' | 'development'  // config
+  },
+  user: {
+    loginStatus: 'guest' | 'loggedIn'  // app
   }
 }
 ```
 
-## Who sets what
-
-| Set by | Meaning |
-|---|---|
-| **Sheriff** | Read from the browser or generated, automatically, on every page view. Developers can't forget it or get it wrong. |
-| **Config** | Set once when Sheriff starts. The same on every page. |
-| **App** | Passed in with each `trackPage` call. Only the app knows it. |
-
 ## Rules
 
-| Name | Type | Set by | Rule | Notes |
+| Name | Type | Set by | Rule | Why it's in the core |
 |---|---|---|---|---|
-| `page.viewId` | string | Sheriff | UUID, new on every page view | Ties each interaction back to its page view. |
-| `page.url` | string | Sheriff | Full URL | Captured at page-view time. |
-| `page.path` | string | Sheriff | Starts with `/`, no query string | |
-| `page.referrer` | string | Sheriff | URL, or empty | In single-page apps this is the previous page's URL, because `document.referrer` never changes there. |
-| `page.title` | string | Sheriff | Non-empty | Read at page-view time, after content has loaded, because titles often update late in single-page apps. |
-| `page.name` | string | App | Non-empty | A stable business name, e.g. `product detail`. Not the title. |
-| `page.type` | string | App | One of the business's agreed values | Suggested default: `home`, `category`, `searchResults`, `product`, `cart`, `checkout`, `orderConfirmation`, `account`, `content`, `error`. Drives page-type contracts. |
-| `page.locale` | string | App | BCP 47, e.g. `en-GB` | Can move to config on single-locale sites. |
-| `user.isLoggedIn` | boolean | App | Always required | |
-| `user.customerId` | string | App | **Required when** `user.isLoggedIn` is true. **Must be absent when** it's false. | A hashed or internal id. Never an email address. |
-| `site.name` | string | Config | Non-empty | E.g. `shop-uk`. |
-| `site.environment` | enum | Config | `production`, `staging` or `development` | Keeps test data out of reports. |
-| `site.appVersion` | string | Config | Non-empty | The release version. Ties a tracking break to the release that caused it. |
+| `page.path` | string | Sheriff | Starts with `/`, no query string | Rules and reports key off it. A server-side collector later has no `window.location`. |
+| `page.referrer` | string | Sheriff | URL, or empty on the first page | In single-page apps `document.referrer` never changes, so Sheriff sets it to the previous page instead. |
+| `site.environment` | enum | Config | `production`, `staging` or `development` | Keeps test data out of reports. Sheriff can also be strict in development and lenient in production. |
+| `user.loginStatus` | enum | App | `guest` or `loggedIn` | Nearly universal. A string reads better in reports than true/false, and can grow later (e.g. `recognised`). |
 
-## Deliberately left out
+**Set by:** Sheriff means read automatically on every page view. Config means set once when Sheriff starts. App means passed in with each `trackPage` call.
 
-- **Consent state:** the tag manager and consent platform own this in v1.
-- **Device, browser, screen size, UTM parameters:** analytics tools collect these themselves.
-- **Currency, basket, products:** ecommerce-specific, so they belong in page-type or event contracts.
-- **Site section or category hierarchy:** common, but every business shapes it differently.
+## Considered and left out
 
-## Open questions
+| Candidate | Why not |
+|---|---|
+| `page.url` | Meaningful query parameters (search term, filters) belong as named fields in page-type contracts. Raw query strings are where emails and tokens leak. |
+| URL parameters (UTMs etc.) | Analytics tools read them from the URL themselves. Revisit when server-side needs them for attribution. |
+| `page.title` | Changes with copy, SEO and A/B tests, and can contain personal data. Tools collect it themselves. |
+| `page.name` | Useful, but not needed for a lean core. |
+| `page.type` | Likely needed once page-type contracts start ([#2](https://github.com/temelm/sheriff/issues/2)). Deferred until then. |
+| `site.name`, language | The same value on every page of a single site. Custom variables where needed. |
+| `user.customerId` | Not every site has accounts. The first example of a custom conditional rule: required when `loginStatus` is `loggedIn`, absent otherwise. |
+| Consent state | Owned by the tag manager and consent platform in v1. |
+| Device, browser, screen size | Analytics tools collect these themselves. |
 
-1. `page.type`: agreed per business, with the suggested default above?
-2. `site.appVersion`: does this match how releases work in practice?
-3. Anything on every page of a real data layer that's missing here?
+## Custom global variables
+
+Every business needs more than this core, so Sheriff must let a site add its own global variables and rules. How that works is for the architecture draft ([#6](https://github.com/temelm/sheriff/issues/6)).
